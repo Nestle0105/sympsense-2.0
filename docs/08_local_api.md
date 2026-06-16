@@ -33,6 +33,7 @@ sympsense serve-api
 ## Доступные endpoints
 
 - `GET /health`
+- `GET /longevity`
 - `GET /v1/overview`
 - `GET /v1/quality/latest`
 - `GET /v1/selfcheck/latest`
@@ -42,6 +43,12 @@ sympsense serve-api
 - `POST /v1/export/downstream-v1/build`
 - `GET /v1/reports/patient-briefing/v1`
 - `POST /v1/reports/patient-briefing/v1/build`
+- `GET /v1/longevity/overview`
+- `GET /v1/longevity/horsemen`
+- `GET /v1/longevity/baselines`
+- `GET /v1/longevity/protocols`
+- `GET /v1/longevity/gaps`
+- `GET /v1/longevity/screening-calendar`
 - `GET /v1/facts/problem-list/v1`
 - `POST /v1/facts/problem-list/v1/build`
 - `GET /v1/documents`

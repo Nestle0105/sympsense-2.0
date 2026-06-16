@@ -16,6 +16,7 @@ from sympsense.analytics_graph import build_body_graph
 from sympsense.downstream_export import build_downstream_export
 from sympsense.fact_review_decisions import add_decision
 from sympsense.fact_review_queue import build_fact_review_queue
+from sympsense.longevity_overview import build_longevity_overview
 from sympsense.patient_briefing import build_patient_briefing
 from sympsense.problem_list import build_problem_list
 from sympsense.review_admin import delete_document
@@ -196,6 +197,19 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             "rebuilt_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    def rebuild_longevity_page() -> dict[str, Any]:
+        html_path = app.state.project_root / "data/derived/reports/longevity_v1.html"
+        try:
+            from scripts.reports import build_longevity_v1 as longevity_builder
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError(f"Longevity builder import failed: {exc}") from exc
+        out_path = longevity_builder.build(project_root=app.state.project_root)
+        return {
+            "ok": True,
+            "html": str(out_path or html_path).replace("\\", "/"),
+            "rebuilt_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         data_root_value: Path = app.state.data_root
@@ -223,6 +237,20 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         if not ui_path.exists():
             rebuild_ui()
         return FileResponse(ui_path, media_type="text/html; charset=utf-8")
+
+    @app.get("/longevity")
+    def longevity_page() -> FileResponse:
+        project_root: Path = app.state.project_root
+        html_path = project_root / "data/derived/reports/longevity_v1.html"
+        if not html_path.exists():
+            rebuild_longevity_page()
+        return FileResponse(html_path, media_type="text/html; charset=utf-8")
+
+    @app.get("/longevity/checklist")
+    def longevity_checklist_page() -> FileResponse:
+        project_root: Path = app.state.project_root
+        html_path = project_root / "data/derived/reports/longevity_checklist_v1.html"
+        return FileResponse(html_path, media_type="text/html; charset=utf-8")
 
     @app.get("/api/health")
     def ui_health() -> dict[str, Any]:
@@ -788,6 +816,61 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get("/v1/longevity/overview")
+    def get_longevity_overview() -> dict[str, Any]:
+        project_root: Path = app.state.project_root
+        try:
+            return build_longevity_overview(
+                project_root=project_root,
+                write_report=False,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get("/v1/longevity/horsemen")
+    def get_longevity_horsemen() -> dict[str, Any]:
+        payload = get_longevity_overview()
+        return {
+            "generated_at": payload.get("generated_at"),
+            "version": payload.get("version"),
+            "horsemen": payload.get("horsemen") or {},
+        }
+
+    @app.get("/v1/longevity/baselines")
+    def get_longevity_baselines() -> dict[str, Any]:
+        payload = get_longevity_overview()
+        return {
+            "generated_at": payload.get("generated_at"),
+            "items": payload.get("baseline_measurements") or [],
+            "physical_baselines": payload.get("physical_baselines") or [],
+        }
+
+    @app.get("/v1/longevity/protocols")
+    def get_longevity_protocols() -> dict[str, Any]:
+        payload = get_longevity_overview()
+        return {
+            "generated_at": payload.get("generated_at"),
+            "items": payload.get("protocols") or [],
+        }
+
+    @app.get("/v1/longevity/gaps")
+    def get_longevity_gaps() -> dict[str, Any]:
+        payload = get_longevity_overview()
+        return {
+            "generated_at": payload.get("generated_at"),
+            "items": payload.get("gaps") or [],
+        }
+
+    @app.get("/v1/longevity/screening-calendar")
+    def get_longevity_screening_calendar() -> dict[str, Any]:
+        payload = get_longevity_overview()
+        return {
+            "generated_at": payload.get("generated_at"),
+            "items": payload.get("screening_calendar") or [],
+        }
 
     return app
 

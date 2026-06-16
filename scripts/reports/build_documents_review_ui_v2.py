@@ -104,11 +104,6 @@ tbody#rows tr:hover{background:#f8fafc;cursor:pointer}
 .lab-value-alert{color:#b91c1c;font-weight:600}
 details.sec summary{cursor:pointer;user-select:none}
 details.sec[open] summary{margin-bottom:6px}
-.briefing-kpi-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:10px}
-.briefing-kpi{border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fafafa}
-.briefing-kpi .label{font-size:12px;color:#6b7280}
-.briefing-kpi .num{font-size:24px;font-weight:800;line-height:1.15;margin-top:2px}
-.briefing-kpi .hint{font-size:12px;color:#6b7280;margin-top:3px}
 .briefing-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
 .briefing-section{border:1px solid #e5e7eb;border-radius:12px;padding:10px;background:#fff}
 .briefing-section h3{margin:0;font-size:16px}
@@ -134,7 +129,6 @@ details.sec[open] summary{margin-bottom:6px}
   .queue-controls{grid-template-columns:1fr 1fr}
   .lab-summary-controls{grid-template-columns:1fr 1fr}
   .controls{grid-template-columns:1fr 1fr}
-  .briefing-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .briefing-grid{grid-template-columns:1fr}
 }
 </style>
@@ -949,14 +943,6 @@ function renderLabAttentionTable(items){
   `;
 }
 
-function daysSinceText(days){
-  const n = Number(days);
-  if(!Number.isFinite(n)) return 'дата не определена';
-  if(n <= 45) return `${n} дн назад`;
-  if(n <= 365) return `${Math.round(n/30)} мес назад`;
-  return `${Math.round(n/365)} г назад`;
-}
-
 function renderBriefingRows(items, renderFn, emptyText){
   if(!items || !items.length) return `<div class="muted">${e(emptyText || 'нет данных')}</div>`;
   return items.map(renderFn).join('');
@@ -977,17 +963,39 @@ function priorityVisual(priority){
   return { cls:'prio-low', label:'низкий' };
 }
 
+function cleanBoilerplateText(text){
+  let s = (text || '').toString().replace(/\\s+/g, ' ').trim();
+  if(!s) return '';
+  s = s
+    .replace(/^Последнее подтверждение:[^.]*\\.?\\s*/i, '')
+    .replace(/Состояние актуально для текущего визита\\.?/gi, '')
+    .replace(/^Уточнить текущую активность состояния\\s+«[^»]+»\\s+и критерии контроля динамики\\.?/i, '')
+    .replace(/^Проверить долгосрочный план наблюдения по состоянию\\s+«[^»]+»\\.?/i, '')
+    .replace(/^Обсудить, нужен ли контроль показателя\\s+«[^»]+»\\s+и в какие сроки его пересдать\\.?/i, '')
+    .replace(/\\s{2,}/g, ' ')
+    .trim();
+  return s;
+}
+
+function conciseActiveText(item){
+  const limits = Array.isArray(item?.functional_limits) ? item.functional_limits : [];
+  if(limits.length){
+    return truncateText(cleanBoilerplateText(limits[0]) || limits[0], 170);
+  }
+  const prompt = cleanBoilerplateText(item?.discussion_prompt || '');
+  if(prompt) return truncateText(prompt, 170);
+  return 'Сверить текущие симптомы, допустимую нагрузку и понятный план контроля.';
+}
+
 async function loadPatientBriefing(){
   if(!briefingPanelEl) return;
   const briefingRes = await fetch(readApiUrl('/v1/reports/patient-briefing/v1'));
   if(!briefingRes.ok) throw new Error(`Ошибка API сводки: HTTP ${briefingRes.status}`);
   const payload = await briefingRes.json();
-  const scope = payload.scope || {};
   const quality = payload.quality || {};
   const labs = payload.lab_attention_items || [];
   const findings = payload.clinical_findings || {};
   const currentState = payload.current_state || {};
-  const csCounters = currentState.counters || {};
   const active = currentState.active_conditions || [];
   const longTerm = currentState.long_term_conditions || [];
   const monitor = currentState.monitoring_items || [];
@@ -995,38 +1003,28 @@ async function loadPatientBriefing(){
   const history = currentState.history_items || [];
   const uncertainItems = currentState.uncertain_items || [];
   const priorities = findings.prioritized_findings || [];
-  const agenda = findings.visit_agenda || payload.suggested_discussion_points || [];
+  const diagnosisPriorities = priorities.filter(x => {
+    const k = (x?.kind || '').toString();
+    return k === 'condition_active' || k === 'condition_monitor';
+  });
   const qualityNote = findings.quality_note || '';
   const highCount = priorities.filter(x => (x.priority||'') === 'high').length;
   const mediumCount = priorities.filter(x => (x.priority||'') === 'medium').length;
   const lowCount = priorities.filter(x => (x.priority||'') === 'low').length;
-  const activeCount = Number(csCounters.active_conditions || 0);
-  const monitorCount = Number(csCounters.monitoring_items || 0);
-  const longTermCount = Number(csCounters.long_term_conditions || 0);
-  const labMonitorCount = monitor.filter(x => (x.kind||'') === 'lab_monitor').length;
-  const conditionMonitorCount = monitor.filter(x => (x.kind||'') !== 'lab_monitor').length;
   const prioritiesCount = priorities.length;
 
   briefingPanelEl.innerHTML = `
-    <div class="briefing-kpi-grid">
-      <div class="briefing-kpi"><div class="label">документов</div><div class="num">${e(scope.documents_total||0)}</div><div class="hint">в базе</div></div>
-      <div class="briefing-kpi"><div class="label">период</div><div class="num" style="font-size:15px">${e(scope.date_min||'н/д')} -> ${e(scope.date_max||'н/д')}</div><div class="hint">исторический охват</div></div>
-      <div class="briefing-kpi"><div class="label">активные состояния</div><div class="num">${e(activeCount)}</div><div class="hint">текущий фокус</div></div>
-      <div class="briefing-kpi"><div class="label">долгосрочный фон</div><div class="num">${e(longTermCount)}</div><div class="hint">важно помнить</div></div>
-      <div class="briefing-kpi"><div class="label">мониторинг</div><div class="num">${e(monitorCount)}</div><div class="hint">лабы: ${e(labMonitorCount)} | состояния: ${e(conditionMonitorCount)}</div></div>
-    </div>
-
     <div class="briefing-grid">
       <div class="briefing-section">
         <h3>Что важно сейчас</h3>
-        <div class="briefing-sub">Состояния с наиболее свежими подтверждениями.</div>
+        <div class="briefing-sub">Ключевые состояния, на которые стоит ориентироваться в ближайшее время.</div>
         <div class="briefing-list">
           ${renderBriefingRows(
             active.slice(0,6),
             x=>`<div class="briefing-item">
               <div class="head"><div class="title">${e(x.title||'')}</div></div>
-              <div class="meta">последнее подтверждение: ${e(x.last_seen||'н/д')} (${e(daysSinceText(x.days_since_last))})${(x.icd_codes||[]).length ? ` | МКБ: ${e((x.icd_codes||[]).join(', '))}` : ''}</div>
-              <div class="txt">${e(truncateText(x.why_in_state||'', 180))}</div>
+              <div class="meta">фокус текущего наблюдения</div>
+              <div class="txt">${e(conciseActiveText(x))}</div>
             </div>`,
             'Нет активных состояний в текущем окне данных.'
           )}
@@ -1034,11 +1032,11 @@ async function loadPatientBriefing(){
       </div>
 
       <div class="briefing-section">
-        <h3>Приоритеты к врачу</h3>
-        <div class="briefing-sub">Что имеет смысл обсудить на ближайшем приеме.</div>
+        <h3>Ключевые диагнозы и состояния</h3>
+        <div class="briefing-sub">Короткий список ориентиров по текущей базе, без рекомендаций.</div>
         <div class="briefing-list">
           ${renderBriefingRows(
-            priorities.slice(0,8),
+            diagnosisPriorities.slice(0,10),
             x=>{
               const pv = priorityVisual(x.priority);
               return `<div class="briefing-item">
@@ -1046,11 +1044,9 @@ async function loadPatientBriefing(){
                   <div class="title">${e(x.title||'')}</div>
                   <span class="prio-chip ${pv.cls}">${e(pv.label)}</span>
                 </div>
-                <div class="txt">${e(truncateText(x.why_it_matters||'', 160))}</div>
-                <div class="meta">обсудить: ${e(truncateText(x.discussion_prompt||'', 140))}</div>
               </div>`;
             },
-            'Приоритетные пункты пока не выделены.'
+            'Ключевые диагнозы в приоритетах не выделены.'
           )}
         </div>
       </div>
@@ -1065,7 +1061,7 @@ async function loadPatientBriefing(){
             longTerm.slice(0,10),
             x=>`<div class="briefing-item">
               <div class="title">${e(x.title||'')}</div>
-              <div class="meta">последнее: ${e(x.last_seen||'н/д')} | подтверждения: docs=${e(x.doc_ids_count||0)}, mentions=${e(x.mentions_count||0)}</div>
+              <div class="meta">долгосрочный клинический фон</div>
             </div>`,
             'Устойчивые состояния пока не выделены.'
           )}
@@ -1084,14 +1080,14 @@ async function loadPatientBriefing(){
                 const docBtn = x.latest_doc_id ? ` <button class="link-btn" onclick="openDoc('${e(x.latest_doc_id)}')">к документу</button>` : '';
                 return `<div class="briefing-item">
                   <div class="head"><div class="title">${e(x.title||'')}</div></div>
-                  <div class="meta">лаборатория | последнее: ${e(x.latest_date||'н/д')} (${e(daysSinceText(x.days_since_last))})${docBtn}</div>
+                  <div class="meta">лабораторный контроль${docBtn}</div>
                   <div class="txt">значение: ${e(x.latest_value||'н/д')} | референс: ${e(x.latest_reference||'н/д')}</div>
                 </div>`;
               }
               return `<div class="briefing-item">
                 <div class="title">${e(x.title||'')}</div>
-                <div class="meta">состояние | последнее: ${e(x.last_seen||'н/д')} (${e(daysSinceText(x.days_since_last))})</div>
-                <div class="txt">${e(truncateText(x.monitoring_reason||'', 140))}</div>
+                <div class="meta">плановое наблюдение</div>
+                <div class="txt">${e(truncateText(cleanBoilerplateText(x.monitoring_reason||'') || x.monitoring_reason || '', 140))}</div>
               </div>`;
             },
             'На текущем срезе отдельные пункты мониторинга не выделены.'
@@ -1106,23 +1102,13 @@ async function loadPatientBriefing(){
       <div style="margin-top:8px">${renderLabAttentionTable(labs)}</div>
     </div>
 
-    <div class="briefing-grid">
-      <div class="briefing-section">
-        <h3>Ограничения и осторожность</h3>
-        <div class="briefing-sub">Практические ограничения нагрузки и режима.</div>
-        ${limits.length
-          ? `<ul class="briefing-bullets">${limits.slice(0,10).map(x=>`<li>${e(x)}</li>`).join('')}</ul>`
-          : `<div class="muted" style="margin-top:8px">Специальных ограничений не выделено.</div>`
-        }
-      </div>
-      <div class="briefing-section">
-        <h3>Повестка на следующий визит</h3>
-        <div class="briefing-sub">Список вопросов, который удобно взять к врачу.</div>
-        ${agenda.length
-          ? `<ol class="briefing-checklist">${agenda.slice(0,8).map(x=>`<li>${e(x)}</li>`).join('')}</ol>`
-          : `<div class="muted" style="margin-top:8px">Повестка пока не заполнена.</div>`
-        }
-      </div>
+    <div class="briefing-section" style="margin-top:10px">
+      <h3>Ограничения и осторожность</h3>
+      <div class="briefing-sub">Практические ограничения нагрузки и режима.</div>
+      ${limits.length
+        ? `<ul class="briefing-bullets">${limits.slice(0,10).map(x=>`<li>${e(x)}</li>`).join('')}</ul>`
+        : `<div class="muted" style="margin-top:8px">Специальных ограничений не выделено.</div>`
+      }
     </div>
 
     <details class="sec">

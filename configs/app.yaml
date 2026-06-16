@@ -1,5 +1,7 @@
 patient_id: self
 timezone: Europe/Moscow
+birth_year: 1989
+birth_date: "1989-10-23"
 
 processing:
   mode: agent_session

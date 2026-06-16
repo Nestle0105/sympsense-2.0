@@ -49,6 +49,12 @@
 - API (read): `GET http://127.0.0.1:8000/v1/reports/patient-briefing/v1`
 - API (build report): `POST http://127.0.0.1:8000/v1/reports/patient-briefing/v1/build`
 
+## Longevity dashboard
+
+- URL: `http://127.0.0.1:8000/longevity`
+- API: `GET http://127.0.0.1:8000/v1/longevity/overview`
+- Назначение: проактивный обзор longevity-маркеров, скринингов, baseline-метрик и gaps без клинических назначений.
+
 ## Problem list (curated)
 
 - CLI: `sympsense problem-list`
