@@ -2,12 +2,26 @@
 
 Персональная медицинская карта. Один пользователь, все медданные локально и gitignored.
 
+## Запуск (один сервер)
+
+```
+sympsense serve-api
+```
+
+Один процесс на порту **8000** — даёт всё:
+- `/ui` — интерфейс (открыть в браузере)
+- `/v1/...` — все API-эндпоинты (анализы, документы, аналитика)
+- `/longevity` — страница долголетия
+
+Второго сервера нет. Если `sympsense` не найден — убедись что CLI установлен (`pip install -e apps/cli` из корня проекта).
+
 ## Core capabilities
 
 | Что                         | Как запустить                                    | Артефакт                                          |
 |-----------------------------|--------------------------------------------------|---------------------------------------------------|
+| **Сервер (UI + API)**       | `sympsense serve-api` → http://localhost:8000/ui | один процесс, всё включено                        |
+| Обновить UI                 | `python scripts/reports/build_documents_review_ui_v2.py` | `data/derived/reports/ui_documents_registry.html` |
 | Обработка новых документов  | Файлы в `data/raw/inbox/`                        | `data/canonical/` + fact layer                    |
-| UI                          | `build_documents_review_ui_v2.py`                | `data/derived/reports/ui_documents_registry.html` |
 | **Аналитика здоровья**      | Промт из `docs/ANALYST_PROMPT.md`                | `data/derived/reports/analyst_findings_*.json`    |
 
 ## Аналитика здоровья — ключевая функция
