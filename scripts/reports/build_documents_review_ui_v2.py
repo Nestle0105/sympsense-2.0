@@ -803,10 +803,16 @@ function buildLabSummaryRows(labFacts){
         analyte_base_name: baseName,
         measurement_label: labMeasurementLabel(row),
         classification_group: classifyLabGroup(row, baseName),
+        clinical_sort_rank: labClinicalSortRank(row, baseName),
         rows: [],
       });
     }
-    groups.get(key).rows.push(row);
+    const currentGroup = groups.get(key);
+    currentGroup.clinical_sort_rank = Math.min(
+      Number(currentGroup.clinical_sort_rank || 9000),
+      labClinicalSortRank(row, currentGroup.analyte_base_name || rawName),
+    );
+    currentGroup.rows.push(row);
   }
   const years = [...yearsSet].sort((a,b)=>a.localeCompare(b));
   const out = [];
@@ -846,6 +852,7 @@ function buildLabSummaryRows(labFacts){
       analyte_base_name: g.analyte_base_name || g.analyte_name,
       measurement_label: g.measurement_label || 'значение',
       classification_group: g.classification_group || 'Прочее',
+      clinical_sort_rank: Number(g.clinical_sort_rank || 9000),
       abnormal_count: abnormalCount,
       by_year: byYear,
       latest_reference: latestReference,
@@ -853,13 +860,7 @@ function buildLabSummaryRows(labFacts){
     });
   }
   out.sort((a,b) => {
-    const abnormalCmp = Number(b.abnormal_count || 0) - Number(a.abnormal_count || 0);
-    if(abnormalCmp !== 0) return abnormalCmp;
-    const baseCmp = (a.analyte_base_name || a.analyte_name || '').localeCompare((b.analyte_base_name || b.analyte_name || ''), 'ru');
-    if(baseCmp !== 0) return baseCmp;
-    const rankCmp = labMeasurementRank(a.measurement_label) - labMeasurementRank(b.measurement_label);
-    if(rankCmp !== 0) return rankCmp;
-    return (a.measurement_label || '').localeCompare((b.measurement_label || ''), 'ru');
+    return compareLabSummaryRows(a, b);
   });
   return { rows: out, years: years, duplicate_stats: duplicateStats };
 }
@@ -962,6 +963,80 @@ const LAB_GROUP_RULES = [
   },
 ];
 
+const LAB_CLINICAL_ORDER_RULES = [
+  {
+    group: 'ОАК / гематология',
+    ranks: [
+      { rank: 100, analyteIds: ['immature_granulocytes', 'normoblasts', 'reticulocytes', 'erythrocyte_fragments', 'atypical_mononuclear_cells'], terms: ['незрелые гранулоциты', 'нормобласт', 'ретикулоцит', 'атипичные мононуклеар', 'фрагмент'] },
+      { rank: 10, analyteIds: ['hemoglobin'], terms: ['гемоглобин', 'hgb', 'hb'] },
+      { rank: 20, analyteIds: ['rbc', 'hematocrit'], terms: ['эритроцит', 'гематокрит', 'rbc', 'hct'] },
+      { rank: 30, analyteIds: ['mcv', 'mch', 'mchc', 'rdw_sd', 'rdw_cv'], terms: ['mcv', 'mch', 'mchc', 'rdw', 'средний объем эритроцита', 'распределения эритроцит'] },
+      { rank: 40, analyteIds: ['wbc'], terms: ['лейкоцит', 'wbc'] },
+      { rank: 50, analyteIds: ['neutrophils'], terms: ['нейтрофил'] },
+      { rank: 60, analyteIds: ['lymphocytes'], terms: ['лимфоцит'] },
+      { rank: 70, analyteIds: ['monocytes'], terms: ['моноцит'] },
+      { rank: 80, analyteIds: ['eosinophils'], terms: ['эозинофил'] },
+      { rank: 90, analyteIds: ['basophils'], terms: ['базофил'] },
+      { rank: 110, analyteIds: ['platelets', 'mpv', 'plateletcrit', 'pdw', 'large_platelet_ratio'], terms: ['тромбоцит', 'тромбокрит', 'mpv', 'pdw', 'p-lcr'] },
+      { rank: 120, analyteIds: ['esr'], terms: ['соэ', 'westergren', 'вестергрен'] },
+    ],
+  },
+  {
+    group: 'Биохимия',
+    ranks: [
+      { rank: 10, terms: ['глюкоз', 'гликирован', 'hba1c', 'инсулин'] },
+      { rank: 20, terms: ['холестерин', 'лпнп', 'лпвп', 'триглицерид', 'ldl', 'hdl', 'аполипопротеин', 'липопротеин'] },
+      { rank: 30, terms: ['аланинаминотрансфераза', 'аспартатаминотрансфераза', 'алат', 'асат', 'алт', 'аст', 'гамма-гт', 'ггт', 'билирубин', 'щелочная фосфатаза'] },
+      { rank: 40, terms: ['креатинин', 'мочев', 'скф', 'egfr', 'мочевая кислота'] },
+      { rank: 50, terms: ['общий белок', 'альбумин', 'глобулин'] },
+      { rank: 60, terms: ['натрий', 'калий', 'хлор', 'кальций', 'магний', 'фосфор'] },
+      { rank: 70, terms: ['с-реактив', 'срб', 'crp', 'гомоцистеин'] },
+    ],
+  },
+  {
+    group: 'Обмен железа / витамины',
+    ranks: [
+      { rank: 10, terms: ['ферритин'] },
+      { rank: 20, terms: ['железо'] },
+      { rank: 30, terms: ['трансферрин', 'железосвязывающая', 'ожсс', 'лжсс', 'насыщения трансферрина'] },
+      { rank: 40, terms: ['витамин d', '25(он) d', '25-oh', '25 oh'] },
+      { rank: 50, terms: ['b12', 'в12', 'фолиевая кислота', 'фолат'] },
+    ],
+  },
+  {
+    group: 'Гормоны',
+    ranks: [
+      { rank: 10, terms: ['ттг', 'тиреотроп'] },
+      { rank: 20, terms: ['т4', 'трийодтиронин', 'т3'] },
+      { rank: 30, terms: ['пролактин'] },
+      { rank: 40, terms: ['фсг', 'лютеиниз', 'лг'] },
+      { rank: 50, terms: ['эстрадиол', 'прогестерон', '17-oh', '17-он'] },
+      { rank: 60, terms: ['тестостерон', 'гспг', 'андроген', 'дгэа', 'андростендион'] },
+      { rank: 70, terms: ['кортизол'] },
+    ],
+  },
+  {
+    group: 'Коагулограмма',
+    ranks: [
+      { rank: 10, terms: ['протромбин', 'пв'] },
+      { rank: 20, terms: ['мно', 'inr'] },
+      { rank: 30, terms: ['ачтв'] },
+      { rank: 40, terms: ['тромбиновое время'] },
+      { rank: 50, terms: ['фибриноген'] },
+    ],
+  },
+  {
+    group: 'Анализ мочи',
+    ranks: [
+      { rank: 10, terms: ['цвет', 'прозрачн', 'удельная плотность', 'относительная плотность', 'ph'] },
+      { rank: 20, terms: ['белок', 'глюкоз', 'кетон', 'билирубин', 'уробилиноген'] },
+      { rank: 30, terms: ['нитрит', 'эстераза лейкоцитов'] },
+      { rank: 40, terms: ['лейкоцит', 'эритроцит', 'эпителий', 'цилиндр'] },
+      { rank: 50, terms: ['бактерии', 'слизь', 'кристалл', 'соль'] },
+    ],
+  },
+];
+
 function labNormText(value){
   return (value || '').toString().toLowerCase().replaceAll('ё', 'е').replace(/\\s+/g, ' ').trim();
 }
@@ -982,6 +1057,54 @@ function classifyLabGroup(row, displayName){
     if(labTextHasAny(haystack, rule.terms || [])) return rule.label;
   }
   return 'Прочее';
+}
+
+function labClinicalSortRank(row, displayName){
+  const group = classifyLabGroup(row, displayName);
+  const analyteId = labNormText(row?.analyte_id || '');
+  const name = labNormText(displayName || row?.normalized_label || row?.analyte_name || '');
+  const rawName = labNormText(row?.analyte_name || '');
+  const haystack = `${name} ${rawName}`;
+  const groupRules = LAB_CLINICAL_ORDER_RULES.find(x => x.group === group);
+  if(!groupRules) return 9000;
+  for(const rule of groupRules.ranks || []){
+    if((rule.analyteIds || []).includes(analyteId)) return rule.rank;
+    if(analyteId) continue;
+    if(labTextHasAny(haystack, rule.terms || [])) return rule.rank;
+  }
+  return 9000;
+}
+
+function labSummaryClinicalSortRank(row){
+  const stored = Number(row?.clinical_sort_rank);
+  if(Number.isFinite(stored) && stored < 9000) return stored;
+  return labClinicalSortRank(
+    {
+      analyte_name: row?.analyte_name || '',
+      normalized_label: row?.analyte_base_name || '',
+      section_name: row?.classification_group || '',
+    },
+    row?.analyte_base_name || row?.analyte_name || '',
+  );
+}
+
+function compareLabSummaryRows(a, b){
+  const clinicalCmp = labSummaryClinicalSortRank(a) - labSummaryClinicalSortRank(b);
+  if(clinicalCmp !== 0) return clinicalCmp;
+  const baseCmp = (a.analyte_base_name || a.analyte_name || '').localeCompare((b.analyte_base_name || b.analyte_name || ''), 'ru');
+  if(baseCmp !== 0) return baseCmp;
+  const rankCmp = labMeasurementRank(a.measurement_label) - labMeasurementRank(b.measurement_label);
+  if(rankCmp !== 0) return rankCmp;
+  const aAbn = Number(a.abnormal_count || 0) > 0 ? 1 : 0;
+  const bAbn = Number(b.abnormal_count || 0) > 0 ? 1 : 0;
+  if(bAbn !== aAbn) return bAbn - aAbn;
+  const sa = usefulnessScore(a, labSummaryYears);
+  const sb = usefulnessScore(b, labSummaryYears);
+  if(sb !== sa) return sb - sa;
+  const aAbnCount = Number(a.abnormal_count || 0);
+  const bAbnCount = Number(b.abnormal_count || 0);
+  if(bAbnCount !== aAbnCount) return bAbnCount - aAbnCount;
+  return (a.measurement_label || '').localeCompare((b.measurement_label || ''), 'ru');
 }
 
 function detectLabGroup(name){
@@ -1064,6 +1187,10 @@ function renderLabSummaryTable(items){
     if(!grouped.has(g)) grouped.set(g, []);
     grouped.get(g).push(row);
   }
+  for(const rows of grouped.values()){
+    rows.sort(compareLabSummaryRows);
+  }
+  nonDetected.sort(compareLabSummaryRows);
 
   const order = LAB_GROUP_ORDER;
   const parts = [];
@@ -1102,20 +1229,7 @@ function renderLabSummary(){
     return true;
   });
   filtered.sort((a,b) => {
-    const baseCmp = (a.analyte_base_name || a.analyte_name || '').localeCompare((b.analyte_base_name || b.analyte_name || ''), 'ru');
-    if(baseCmp !== 0) return baseCmp;
-    const rankCmp = labMeasurementRank(a.measurement_label) - labMeasurementRank(b.measurement_label);
-    if(rankCmp !== 0) return rankCmp;
-    const aAbn = Number(a.abnormal_count || 0) > 0 ? 1 : 0;
-    const bAbn = Number(b.abnormal_count || 0) > 0 ? 1 : 0;
-    if(bAbn !== aAbn) return bAbn - aAbn;
-    const sa = usefulnessScore(a, labSummaryYears);
-    const sb = usefulnessScore(b, labSummaryYears);
-    if(sb !== sa) return sb - sa;
-    const aAbnCount = Number(a.abnormal_count || 0);
-    const bAbnCount = Number(b.abnormal_count || 0);
-    if(bAbnCount !== aAbnCount) return bAbnCount - aAbnCount;
-    return (a.measurement_label || '').localeCompare((b.measurement_label || ''), 'ru');
+    return compareLabSummaryRows(a, b);
   });
   const abnormalSeries = filtered.filter(x => Number(x.abnormal_count || 0) > 0).length;
   const st = labSummaryDuplicateStats || {};

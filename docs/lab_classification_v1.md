@@ -26,6 +26,8 @@ The project does not implement full LOINC mapping yet. Instead, it uses a pragma
 
 ## Current top-level UI groups
 
+Rows inside each group are ordered clinically rather than alphabetically. Known high-value sequences are encoded in the UI catalog: for example CBC starts with hemoglobin/erythrocyte indices, then leukocytes and differential, then platelets and ESR; chemistry starts with glucose/lipids, then liver, kidney, proteins, electrolytes, and inflammation markers. Unknown rows stay inside their detected group and fall back to name sorting after the known clinical ranks.
+
 ### ОАК / гематология
 
 CBC and hematology morphology/count markers:
