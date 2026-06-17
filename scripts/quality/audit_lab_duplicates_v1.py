@@ -12,6 +12,17 @@ FACTS_PATH = ROOT / "data/canonical/facts/lab_results_v1.ndjson"
 REPORTS_DIR = ROOT / "data/derived/reports"
 
 VALUE_TOLERANCE_RELATIVE = 0.08
+CBC_UNKNOWN_HINT_RE = re.compile(
+    r"(?:клиническ\w*\s+анализ\w*\s+кров|общ\w*\s+анализ\w*\s+кров|cbc|"
+    r"\b(?:wbc|rbc|hgb|hb|hct|mcv|mchc|mch|rdw|plt|mpv|pct|pdw|p-lcr|neu|lym|mono|eos|bas|ig|nrbc)\b|"
+    r"лейкоцит|эритроцит|гемоглобин|гематокрит|тромбоцит|нейтрофил|лимфоцит|моноцит|эозинофил|базофил|"
+    r"нормобласт|ретикулоцит|соэ)",
+    flags=re.IGNORECASE,
+)
+CBC_UNKNOWN_EXCLUDE_RE = re.compile(
+    r"(?:моч[аи]|цитолог|pap|урогениталь|влагалищ|шейка|цервик|биохим|коагул|серолог|инфекц)",
+    flags=re.IGNORECASE,
+)
 
 
 def now_stamp() -> str:
@@ -146,6 +157,28 @@ def count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return out
 
 
+def audit_unknown_cbc_like_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        if row.get("analyte_id"):
+            continue
+        section = normalize_space(str(row.get("section_name") or ""))
+        name = normalize_space(str(row.get("analyte_name") or ""))
+        unit = normalize_space(str(row.get("unit") or ""))
+        haystack = " ".join([section, name, unit])
+        if not CBC_UNKNOWN_HINT_RE.search(haystack):
+            continue
+        if CBC_UNKNOWN_EXCLUDE_RE.search(haystack):
+            continue
+        key = (section, name, unit)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row_summary(row))
+    return sorted(out, key=lambda item: (str(item.get("section_name") or ""), str(item.get("analyte_name") or "")))
+
+
 def close_pairs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     pairs: list[dict[str, Any]] = []
     for i, left in enumerate(rows):
@@ -253,6 +286,7 @@ def main() -> None:
     bundled_rows = [row for row in rows if row.get("document_bundle_id")]
     intra_duplicates, related_method_groups = audit_intra_document(rows)
     cross_document_duplicates = audit_cross_document(rows)
+    unknown_cbc_like_rows = audit_unknown_cbc_like_rows(rows)
 
     report = {
         "generated_at": run_ts,
@@ -273,6 +307,7 @@ def main() -> None:
             "intra_document_duplicate_groups_count": len(intra_duplicates),
             "related_method_groups_count": len(related_method_groups),
             "cross_document_duplicate_groups_count": len(cross_document_duplicates),
+            "unknown_cbc_like_rows_count": len(unknown_cbc_like_rows),
         },
         "notes": [
             "This report is audit-only and does not modify facts.",
@@ -282,6 +317,7 @@ def main() -> None:
         "intra_document_duplicate_groups": intra_duplicates,
         "related_method_groups": related_method_groups,
         "cross_document_duplicate_groups": cross_document_duplicates,
+        "unknown_cbc_like_rows": unknown_cbc_like_rows,
     }
 
     report_path = REPORTS_DIR / f"lab_duplicate_audit_v1_{now_stamp()}.json"
