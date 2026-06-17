@@ -797,10 +797,12 @@ function buildLabSummaryRows(labFacts){
     if(year) yearsSet.add(year);
     const key = labSummaryGroupKey(row, rawName);
     if(!groups.has(key)){
+      const baseName = labBaseDisplayName(row);
       groups.set(key, {
         analyte_name: rawName,
-        analyte_base_name: labBaseDisplayName(row),
+        analyte_base_name: baseName,
         measurement_label: labMeasurementLabel(row),
+        classification_group: classifyLabGroup(row, baseName),
         rows: [],
       });
     }
@@ -843,6 +845,7 @@ function buildLabSummaryRows(labFacts){
       analyte_name: g.analyte_name,
       analyte_base_name: g.analyte_base_name || g.analyte_name,
       measurement_label: g.measurement_label || 'значение',
+      classification_group: g.classification_group || 'Прочее',
       abnormal_count: abnormalCount,
       by_year: byYear,
       latest_reference: latestReference,
@@ -900,34 +903,89 @@ function usefulnessScore(row, years){
   return score;
 }
 
-function detectLabGroup(name){
-  const n = (name || '').toLowerCase();
-  if(!n) return 'Прочее';
-  if(
-    n.includes('ттг') || n.includes('тестостерон') || n.includes('пролактин') || n.includes('фсг') ||
-    n.includes('лютеиниз') || n.includes('дгэа') || n.includes('андроген') || n.includes('гормон')
-  ) return 'Гормоны';
-  if(
-    n.includes('днк ') || n.includes('пцр') || n.includes('papilloma') || n.includes('candida') ||
-    n.includes('mycoplasma') || n.includes('ureaplasma') || n.includes('chlamydia') || n.includes('gonorrhoeae') ||
-    n.includes('treponema') || n.includes('trichomonas') || n.includes('gardnerella') || n.includes('cmv') ||
-    n.includes('герпес')
-  ) return 'ПЦР / инфекции';
-  if(
-    n.includes('лейкоц') || n.includes('эритроц') || n.includes('гемоглоб') || n.includes('тромбоц') ||
-    n.includes('нейтроф') || n.includes('лимфоц') || n.includes('моноц') || n.includes('эозиноф') ||
-    n.includes('базоф') || n.includes('соэ') || n.includes('wbc') || n.includes('rbc') || n.includes('plt') ||
-    n.includes('mcv') || n.includes('mch') || n.includes('mchc') || n.includes('rdw')
-  ) return 'Общий анализ крови';
-  if(
-    n.includes('мочев') || n.includes('креатинин') || n.includes('холестерин') || n.includes('лпнп') ||
-    n.includes('лпвп') || n.includes('триглицерид') || n.includes('глюкоз') || n.includes('билирубин')
-  ) return 'Биохимия';
-  if(
-    n.includes('удельная плотность') || n.includes('белок') || n.includes('кетон') || n.includes('нитрит') ||
-    n.includes('прозрачн') || n.includes('цвет мочи')
-  ) return 'Анализ мочи';
+const LAB_GROUP_ORDER = [
+  'ОАК / гематология',
+  'Биохимия',
+  'Обмен железа / витамины',
+  'Гормоны',
+  'Коагулограмма',
+  'Анализ мочи',
+  'Инфекции / серология / ПЦР',
+  'Цитология / патология',
+  'Группа крови',
+  'Прочее',
+];
+
+const LAB_GROUP_RULES = [
+  {
+    label: 'Анализ мочи',
+    section: ['мочи', 'моча'],
+    terms: ['удельная плотность', 'относительная плотность', 'цвет', 'прозрачн', 'нитрит', 'уробилиноген', 'кетон', 'эстераза лейкоцитов', 'эпителий', 'слизь', 'бактерии', 'ph'],
+  },
+  {
+    label: 'Цитология / патология',
+    section: ['цитолог', 'pap', 'гистолог', 'патологоанатом'],
+    terms: ['bethesda', 'папаниколау', 'цитограмм', 'адекватность цитологического образца', 'количество клеток в образце', 'клетки зоны трансформации', 'качество материала', 'макроскопическое описание', 'микроскопическое описание', 'гистологическое заключение', 'патологоанатомическое заключение', 'цитологическое заключение', 'ора'],
+  },
+  {
+    label: 'Коагулограмма',
+    section: ['коагул'],
+    terms: ['ачтв', 'мно', 'inr', 'протромбин', 'тромбиновое время', 'фибриноген', 'пв'],
+  },
+  {
+    label: 'Группа крови',
+    terms: ['группа крови', 'резус', 'rh'],
+  },
+  {
+    label: 'Инфекции / серология / ПЦР',
+    section: ['серолог', 'инфекц', 'пцр'],
+    terms: ['днк ', 'рнк ', 'пцр', 'hbsag', 'anti-hcv', 'анти-hcv', 'вич', 'hiv', 'сифилис', 'treponema', 'бледной трепонеме', 'cmv', 'цитомегаловирус', 'cytomegalovirus', 'epstein', 'ebv', 'sars', 'hpv', 'papilloma', 'герпес', 'helicobacter', 'h. pylori', 'candida', 'mycoplasma', 'ureaplasma', 'chlamydia', 'gonorrhoeae', 'trichomonas', 'gardnerella', 'яйца гельминтов'],
+  },
+  {
+    label: 'Гормоны',
+    terms: ['ттг', 'тестостерон', 'пролактин', 'фсг', 'лютеиниз', 'дгэа', 'дгэа-с', 'андроген', 'андростендион', 'кортизол', 'прогестерон', '17-oh', '17-он', 'эстрадиол', 'гспг', 'гормон'],
+  },
+  {
+    label: 'Обмен железа / витамины',
+    terms: ['ферритин', 'железо', 'трансферрин', 'железосвязывающая', 'ожсс', 'лжсс', 'насыщения трансферрина', 'витамин', 'фолиевая кислота', 'b12', 'в12', '25(он) d'],
+  },
+  {
+    label: 'ОАК / гематология',
+    analyteIds: ['wbc', 'rbc', 'hemoglobin', 'hematocrit', 'mcv', 'mch', 'mchc', 'rdw_sd', 'rdw_cv', 'platelets', 'mpv', 'plateletcrit', 'pdw', 'large_platelet_ratio', 'neutrophils', 'lymphocytes', 'monocytes', 'eosinophils', 'basophils', 'immature_granulocytes', 'normoblasts', 'reticulocytes', 'erythrocyte_fragments', 'atypical_mononuclear_cells', 'esr'],
+    section: ['клинический анализ крови', 'общий анализ крови', 'cbc'],
+    terms: ['лейкоц', 'эритроц', 'гемоглоб', 'гематокрит', 'тромбоц', 'тромбокрит', 'нейтроф', 'лимфоц', 'моноц', 'эозиноф', 'базоф', 'соэ', 'нормобласт', 'ретикулоцит', 'фрагмент эритроцит', 'атипичные мононуклеар', 'wbc', 'rbc', 'hgb', 'hct', 'mcv', 'mch', 'mchc', 'rdw', 'plt', 'mpv', 'pdw', 'p-lcr'],
+  },
+  {
+    label: 'Биохимия',
+    section: ['биохим'],
+    terms: ['аланинаминотрансфераза', 'аспартатаминотрансфераза', 'алат', 'асат', 'алт', 'аст', 'гамма-гт', 'ггт', 'билирубин', 'глюкоз', 'креатинин', 'мочев', 'холестерин', 'лпнп', 'лпвп', 'триглицерид', 'общий белок', 'альбумин', 'калий', 'натрий', 'хлор', 'кальций', 'магний'],
+  },
+];
+
+function labNormText(value){
+  return (value || '').toString().toLowerCase().replaceAll('ё', 'е').replace(/\\s+/g, ' ').trim();
+}
+
+function labTextHasAny(text, terms){
+  return (terms || []).some(term => text.includes(labNormText(term)));
+}
+
+function classifyLabGroup(row, displayName){
+  const analyteId = labNormText(row?.analyte_id || '');
+  const section = labNormText(row?.section_name || '');
+  const name = labNormText(displayName || row?.normalized_label || row?.analyte_name || '');
+  const rawName = labNormText(row?.analyte_name || '');
+  const haystack = `${section} ${name} ${rawName}`;
+  for(const rule of LAB_GROUP_RULES){
+    if((rule.analyteIds || []).includes(analyteId)) return rule.label;
+    if(labTextHasAny(section, rule.section || [])) return rule.label;
+    if(labTextHasAny(haystack, rule.terms || [])) return rule.label;
+  }
   return 'Прочее';
+}
+
+function detectLabGroup(name){
+  return classifyLabGroup({ analyte_name: name }, name);
 }
 
 function rowIsNonDetectedOrMissing(row){
@@ -1002,12 +1060,12 @@ function renderLabSummaryTable(items){
       nonDetected.push(row);
       continue;
     }
-    const g = detectLabGroup(row.analyte_base_name || row.analyte_name);
+    const g = row.classification_group || detectLabGroup(row.analyte_base_name || row.analyte_name);
     if(!grouped.has(g)) grouped.set(g, []);
     grouped.get(g).push(row);
   }
 
-  const order = ['Гормоны','Общий анализ крови','Биохимия','Анализ мочи','ПЦР / инфекции','Прочее'];
+  const order = LAB_GROUP_ORDER;
   const parts = [];
   for(const g of order){
     const rows = grouped.get(g) || [];
@@ -1021,7 +1079,7 @@ function renderLabSummaryTable(items){
   }
   parts.push(`
     <details class="lab-section">
-      <summary><span class="lab-section-title">Без динамики</span><span class="lab-section-count">${nonDetected.length}</span></summary>
+      <summary><span class="lab-section-title">Качественные / без динамики</span><span class="lab-section-count">${nonDetected.length}</span></summary>
       <div style="margin-top:8px">${nonDetected.length ? renderLabSummaryTableMarkup(nonDetected) : '<div class="muted">Нет строк в этой группе.</div>'}</div>
     </details>
   `);
