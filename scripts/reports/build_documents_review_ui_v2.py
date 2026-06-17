@@ -697,10 +697,35 @@ function labMeasurementSuffix(row){
   return '';
 }
 
-function labDisplayName(row){
+function labBaseDisplayName(row){
   const label = (row?.normalized_label || '').toString().trim();
-  if(label) return `${label}${labMeasurementSuffix(row)}`;
+  if(label) return label;
   return (row?.analyte_name || '').toString().trim();
+}
+
+function labMeasurementLabel(row){
+  const kind = (row?.measurement_kind || '').toString();
+  const method = (row?.method || '').toString();
+  let label = 'значение';
+  if(kind === 'absolute') label = 'абс.';
+  if(kind === 'percent') label = '%';
+  if(kind === 'count') label = 'количество';
+  if(method === 'manual_microscopy') return `микроскопия, ${label}`;
+  return label;
+}
+
+function labMeasurementRank(label){
+  const value = (label || '').toString();
+  if(value === 'абс.' || value === 'количество') return 1;
+  if(value === '%') return 2;
+  if(value.startsWith('микроскопия')) return 3;
+  return 9;
+}
+
+function labDisplayName(row){
+  const base = labBaseDisplayName(row);
+  if((row?.normalized_label || '').toString().trim()) return `${base}${labMeasurementSuffix(row)}`;
+  return base;
 }
 
 function labUnitFamily(unit){
@@ -718,6 +743,7 @@ function labSummaryGroupKey(row, displayName){
       row?.specimen || 'unknown_specimen',
       analyteId,
       row?.measurement_kind || 'value',
+      row?.method || 'unknown_method',
       labUnitFamily(row?.unit || ''),
     ].join('::').toLowerCase();
   }
@@ -752,7 +778,12 @@ function buildLabSummaryRows(labFacts){
     if(year) yearsSet.add(year);
     const key = labSummaryGroupKey(row, rawName);
     if(!groups.has(key)){
-      groups.set(key, { analyte_name: rawName, rows: [] });
+      groups.set(key, {
+        analyte_name: rawName,
+        analyte_base_name: labBaseDisplayName(row),
+        measurement_label: labMeasurementLabel(row),
+        rows: [],
+      });
     }
     groups.get(key).rows.push(row);
   }
@@ -791,6 +822,8 @@ function buildLabSummaryRows(labFacts){
     const latestDocId = (latestPoint?.doc_id || '').toString().trim();
     out.push({
       analyte_name: g.analyte_name,
+      analyte_base_name: g.analyte_base_name || g.analyte_name,
+      measurement_label: g.measurement_label || 'значение',
       abnormal_count: abnormalCount,
       by_year: byYear,
       latest_reference: latestReference,
@@ -800,7 +833,11 @@ function buildLabSummaryRows(labFacts){
   out.sort((a,b) => {
     const abnormalCmp = Number(b.abnormal_count || 0) - Number(a.abnormal_count || 0);
     if(abnormalCmp !== 0) return abnormalCmp;
-    return (a.analyte_name || '').localeCompare((b.analyte_name || ''), 'ru');
+    const baseCmp = (a.analyte_base_name || a.analyte_name || '').localeCompare((b.analyte_base_name || b.analyte_name || ''), 'ru');
+    if(baseCmp !== 0) return baseCmp;
+    const rankCmp = labMeasurementRank(a.measurement_label) - labMeasurementRank(b.measurement_label);
+    if(rankCmp !== 0) return rankCmp;
+    return (a.measurement_label || '').localeCompare((b.measurement_label || ''), 'ru');
   });
   return { rows: out, years: years, duplicate_stats: duplicateStats };
 }
@@ -882,9 +919,10 @@ function rowIsNonDetectedOrMissing(row){
 
 function renderLabSummaryTableMarkup(items){
   const yearCount = Math.max((labSummaryYears || []).length, 1);
-  const yearWidth = (36 / yearCount).toFixed(3);
+  const yearWidth = (34 / yearCount).toFixed(3);
   const yearHeaders = (labSummaryYears || []).map(y => `<th>${e(y)}</th>`).join('');
   const yearCols = (labSummaryYears || []).map(() => `<col style="width:${yearWidth}%">`).join('');
+  let prevBaseName = '';
   const rowsHtml = items.map(x => {
     const yearCells = (labSummaryYears || []).map(y => {
       const point = (x.by_year || {})[y];
@@ -898,9 +936,13 @@ function renderLabSummaryTableMarkup(items){
         : '';
       return `<td><span class="${cls}">${e(point.value_text || '—')}</span>${duplicateMark}${sourceMark}</td>`;
     }).join('');
+    const baseName = x.analyte_base_name || x.analyte_name || '';
+    const showBaseName = baseName !== prevBaseName;
+    prevBaseName = baseName;
     return `
       <tr>
-        <td>${e(x.analyte_name)}</td>
+        <td>${showBaseName ? e(baseName) : '<span class="muted">↳</span>'}</td>
+        <td>${e(x.measurement_label || 'значение')}</td>
         ${yearCells}
         <td>${e(cleanReferenceText(x.latest_reference || '') || '—')}</td>
         <td>${x.latest_doc_id ? `<button class="link-btn" onclick="openDoc('${e(x.latest_doc_id)}')">к документу</button>` : '—'}</td>
@@ -910,7 +952,8 @@ function renderLabSummaryTableMarkup(items){
   return `
     <table class="lab-table">
       <colgroup>
-        <col style="width:32%">
+        <col style="width:24%">
+        <col style="width:10%">
         ${yearCols}
         <col style="width:22%">
         <col style="width:10%">
@@ -918,6 +961,7 @@ function renderLabSummaryTableMarkup(items){
       <thead>
         <tr>
           <th>Показатель</th>
+          <th>Вид</th>
           ${yearHeaders}
           <th>Референс</th>
           <th>Документ</th>
@@ -942,7 +986,7 @@ function renderLabSummaryTable(items){
       nonDetected.push(row);
       continue;
     }
-    const g = detectLabGroup(row.analyte_name);
+    const g = detectLabGroup(row.analyte_base_name || row.analyte_name);
     if(!grouped.has(g)) grouped.set(g, []);
     grouped.get(g).push(row);
   }
@@ -973,12 +1017,21 @@ function renderLabSummary(){
   const query = (labSummarySearchEl?.value || '').toLowerCase().trim();
   const flag = (labSummaryFlagFilterEl?.value || '').trim();
   const filtered = labSummaryRows.filter(x => {
-    if(query && !(x.analyte_name || '').toLowerCase().includes(query)) return false;
+    const searchable = [
+      x.analyte_name || '',
+      x.analyte_base_name || '',
+      x.measurement_label || '',
+    ].join(' ').toLowerCase();
+    if(query && !searchable.includes(query)) return false;
     if(flag === 'abnormal' && Number(x.abnormal_count || 0) <= 0) return false;
     if(flag === 'normal' && Number(x.abnormal_count || 0) > 0) return false;
     return true;
   });
   filtered.sort((a,b) => {
+    const baseCmp = (a.analyte_base_name || a.analyte_name || '').localeCompare((b.analyte_base_name || b.analyte_name || ''), 'ru');
+    if(baseCmp !== 0) return baseCmp;
+    const rankCmp = labMeasurementRank(a.measurement_label) - labMeasurementRank(b.measurement_label);
+    if(rankCmp !== 0) return rankCmp;
     const aAbn = Number(a.abnormal_count || 0) > 0 ? 1 : 0;
     const bAbn = Number(b.abnormal_count || 0) > 0 ? 1 : 0;
     if(bAbn !== aAbn) return bAbn - aAbn;
@@ -988,7 +1041,7 @@ function renderLabSummary(){
     const aAbnCount = Number(a.abnormal_count || 0);
     const bAbnCount = Number(b.abnormal_count || 0);
     if(bAbnCount !== aAbnCount) return bAbnCount - aAbnCount;
-    return (a.analyte_name || '').localeCompare((b.analyte_name || ''), 'ru');
+    return (a.measurement_label || '').localeCompare((b.measurement_label || ''), 'ru');
   });
   const abnormalSeries = filtered.filter(x => Number(x.abnormal_count || 0) > 0).length;
   const st = labSummaryDuplicateStats || {};
