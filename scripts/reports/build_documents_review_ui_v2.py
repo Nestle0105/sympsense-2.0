@@ -111,8 +111,9 @@ tbody#rows tr:hover{background:var(--panel2);cursor:pointer}
 .lab-stat-alert{border-color:#573142;background:#281b27;color:#d6a2ad}
 .lab-stat-high{border-color:#21543c;background:#162a20;color:#93d1ab}
 .lab-stat-low{border-color:#42495f;background:#1a1f2c;color:#98a0b7}
-.lab-section{border-top:1px solid #384056;padding-top:12px;margin-top:14px}
-.lab-section summary{list-style:none;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:#202534;border:1px solid #30374c;border-left-width:3px;color:#d8dce8}
+.lab-section{border:1px solid #30374c;border-left-width:3px;border-radius:8px;overflow:hidden;margin-top:8px}
+.lab-section summary{list-style:none;display:flex;align-items:center;gap:8px;padding:7px 10px;color:#d8dce8;border-bottom:0px solid #30374c}
+.lab-section[open] summary{border-bottom-width:1px}
 .lab-section summary::-webkit-details-marker{display:none}
 .lab-section summary::before{content:"";width:7px;height:7px;flex-shrink:0;border-right:1.5px solid #8f97b0;border-bottom:1.5px solid #8f97b0;transform:rotate(-45deg);transition:transform .15s ease}
 .lab-section[open] summary::before{transform:rotate(45deg)}
@@ -1331,18 +1332,18 @@ function renderLabSummaryTable(items, options = {}){
       ? `${visibleRows.length} · <span style="color:var(--muted)">${collapsedRows.length} ↓</span>`
       : `${rows.length}`;
     const gc = labGroupColor(g);
-    const tint = `${gc}0d`;
+    const tint = `${gc}12`;
     parts.push(`
-      <details class="lab-section" open style="--gc:${gc}">
-        <summary style="border-left-color:${gc};background:${tint}"><span class="lab-section-title" style="color:${gc}">${e(g)}</span><span class="lab-section-count">${sectionCountLabel}</span></summary>
+      <details class="lab-section" open style="border-left-color:${gc}">
+        <summary style="background:${tint}"><span class="lab-section-title" style="color:${gc}">${e(g)}</span><span class="lab-section-count">${sectionCountLabel}</span></summary>
         <div style="margin-top:8px">${renderLabSummaryTableMarkup(tableRows)}</div>
         ${collapsedBlock}
       </details>
     `);
   }
   parts.push(`
-    <details class="lab-section" style="--gc:${labGroupColor('Качественные / без динамики')}">
-      <summary style="border-left-color:${labGroupColor('Качественные / без динамики')};background:${labGroupColor('Качественные / без динамики')}0d"><span class="lab-section-title" style="color:${labGroupColor('Качественные / без динамики')}">Качественные / без динамики</span><span class="lab-section-count">${nonDetected.length}</span></summary>
+    <details class="lab-section" style="border-left-color:${labGroupColor('Качественные / без динамики')}">
+      <summary style="background:${labGroupColor('Качественные / без динамики')}12"><span class="lab-section-title" style="color:${labGroupColor('Качественные / без динамики')}">Качественные / без динамики</span><span class="lab-section-count">${nonDetected.length}</span></summary>
       <div style="margin-top:8px">${nonDetected.length ? renderLabSummaryTableMarkup(nonDetected) : '<div class="muted">Нет строк в этой группе.</div>'}</div>
     </details>
   `);
